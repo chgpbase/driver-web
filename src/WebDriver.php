@@ -16,6 +16,7 @@ use BotMan\BotMan\Messages\Outgoing\Question;
 use BotMan\BotMan\Users\User;
 use BotMan\Drivers\Web\Extras\TypingIndicator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -276,13 +277,21 @@ class WebDriver extends HttpDriver
 
         if ($attachment === self::ATTACHMENT_IMAGE) {
             $images = $this->files->map(function ($file) {
-                if ($file instanceof UploadedFile) {
-                    $path = $file->getRealPath();
-                } else {
-                    $path = $file['tmp_name'];
-                }
-
-                return new Image($this->getDataURI($path));
+//                if ($file instanceof UploadedFile) {
+//                    $path = $file->getRealPath();
+//                } else {
+//                    $path = $file['tmp_name'];
+//                }
+                $bot_dir='bot_file_cache';
+                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
+                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
+                $file = new Image($url);
+                $this->replies[]= [
+                    'message' => new OutgoingMessage('', $file),
+                    'additionalParameters' => []
+                ];
+                return $file;
+//                return new Image($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Image::PATTERN);
             $incomingMessage->setImages($images);
@@ -293,8 +302,16 @@ class WebDriver extends HttpDriver
                 } else {
                     $path = $file['tmp_name'];
                 }
-
-                return new Audio($this->getDataURI($path));
+                $bot_dir='bot_file_cache';
+                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
+                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
+                $file = new Audio($url);
+                $this->replies[]= [
+                    'message' => new OutgoingMessage('', $file),
+                    'additionalParameters' => []
+                ];
+                return $file;
+//                return new Audio($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Audio::PATTERN);
             $incomingMessage->setAudio($audio);
@@ -305,8 +322,16 @@ class WebDriver extends HttpDriver
                 } else {
                     $path = $file['tmp_name'];
                 }
-
-                return new Video($this->getDataURI($path));
+                $bot_dir='bot_file_cache';
+                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
+                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
+                $file = new Video($url);
+                $this->replies[]= [
+                    'message' => new OutgoingMessage('', $file),
+                    'additionalParameters' => []
+                ];
+                return $file;
+//                return new Video($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Video::PATTERN);
             $incomingMessage->setVideos($videos);
@@ -317,8 +342,16 @@ class WebDriver extends HttpDriver
                 } else {
                     $path = $file['tmp_name'];
                 }
-
-                return new File($this->getDataURI($path));
+                $bot_dir='bot_file_cache';
+                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
+                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
+                $file = new File($url);
+                $this->replies[]= [
+                    'message' => new OutgoingMessage('', $file),
+                    'additionalParameters' => []
+                ];
+                return $file;
+//                return new File($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(File::PATTERN);
             $incomingMessage->setFiles($files);
