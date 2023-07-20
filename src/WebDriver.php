@@ -17,6 +17,7 @@ use BotMan\BotMan\Users\User;
 use BotMan\Drivers\Web\Extras\TypingIndicator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
+use Pusher\Pusher;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -180,9 +181,13 @@ class WebDriver extends HttpDriver
             $this->replyStatusCode = 500;
         }
 
+        $recipient = $matchingMessage->getRecipient() === '' ? $matchingMessage->getSender() : $matchingMessage->getRecipient();
+
+
         return [
             'message' => $message,
             'additionalParameters' => $additionalParameters,
+            'recipient'=> $recipient
         ];
     }
 
@@ -192,7 +197,35 @@ class WebDriver extends HttpDriver
      */
     public function sendPayload($payload)
     {
-        $this->replies[] = $payload;
+        if($this->matchesRequest()) {
+            $this->replies[] = $payload;
+        } else {
+            /** @var $message OutgoingMessage|Question|string */
+            $message=$payload['message'];
+            $channel = 'chat_'.$payload['recipient'];
+            $pusher= new Pusher(config('broadcasting.connections')['pusher']['key'],
+                config('broadcasting.connections')['pusher']['secret'],
+                config('broadcasting.connections')['pusher']['app_id'],
+                config('broadcasting.connections')['pusher']['options']);
+            if(is_string($message)) $text=$message;
+            else  $text=$message->getText();
+            if(!is_string($message)) {
+                $text=$message->getText();
+                $attachmentData = (is_null($message->getAttachment())) ? null : $message->getAttachment()->toWebDriver();
+                $pusher->trigger($channel,'chat_message',[
+                    'type' => 'text',
+                    'text' =>$text,
+                    'attachment' => $attachmentData,
+                ]);
+            } else {
+                $pusher->trigger($channel,'chat_message',[
+                    'type' => 'text',
+                    'text' =>$message,
+                    'attachment' => null,
+
+                ]);
+            }
+        }
     }
 
     /**
