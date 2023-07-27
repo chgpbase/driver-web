@@ -14,6 +14,7 @@ use BotMan\BotMan\Messages\Incoming\IncomingMessage;
 use BotMan\BotMan\Messages\Outgoing\OutgoingMessage;
 use BotMan\BotMan\Messages\Outgoing\Question;
 use BotMan\BotMan\Users\User;
+use BotMan\Drivers\Web\Extras\AttachmentVisitorReply;
 use BotMan\Drivers\Web\Extras\TypingIndicator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
@@ -320,7 +321,7 @@ class WebDriver extends HttpDriver
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
                 $file = new Image($url);
                 $this->replies[]= [
-                    'message' => new OutgoingMessage('', $file),
+                    'message' => new AttachmentVisitorReply('', $file),
                     'additionalParameters' => []
                 ];
                 return $file;
@@ -340,7 +341,7 @@ class WebDriver extends HttpDriver
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
                 $file = new Audio($url);
                 $this->replies[]= [
-                    'message' => new OutgoingMessage('', $file),
+                    'message' => new AttachmentVisitorReply('', $file),
                     'additionalParameters' => []
                 ];
                 return $file;
@@ -360,7 +361,7 @@ class WebDriver extends HttpDriver
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
                 $file = new Video($url);
                 $this->replies[]= [
-                    'message' => new OutgoingMessage('', $file),
+                    'message' => new AttachmentVisitorReply('', $file),
                     'additionalParameters' => []
                 ];
                 return $file;
@@ -380,7 +381,7 @@ class WebDriver extends HttpDriver
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
                 $file = new File($url);
                 $this->replies[]= [
-                    'message' => new OutgoingMessage('', $file),
+                    'message' => new AttachmentVisitorReply('', $file),
                     'additionalParameters' => []
                 ];
                 return $file;
