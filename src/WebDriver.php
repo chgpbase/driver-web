@@ -240,7 +240,9 @@ class WebDriver extends HttpDriver
             $message = $replyData['message'];
             $additionalParameters = $replyData['additionalParameters'];
 
-            if ($message instanceof WebAccess) {
+            if (is_array($message)) {
+                $reply = $message;
+            } elseif ($message instanceof WebAccess) {
                 $reply = $message->toWebDriver();
             } elseif ($message instanceof OutgoingMessage) {
                 $attachmentData = (is_null($message->getAttachment())) ? null : $message->getAttachment()->toWebDriver();
