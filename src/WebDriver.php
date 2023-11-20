@@ -16,7 +16,10 @@ use BotMan\BotMan\Messages\Outgoing\Question;
 use BotMan\BotMan\Users\User;
 use BotMan\Drivers\Web\Extras\AttachmentVisitorReply;
 use BotMan\Drivers\Web\Extras\TypingIndicator;
+use BotTemplateFramework\Distinct\Web\Extensions\ButtonTemplate;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
+//use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Pusher\Pusher;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -42,6 +45,10 @@ class WebDriver extends HttpDriver
     /** @var string */
     protected $errorMessage = '';
 
+    /** @var string */
+
+    protected $channel = '';
+
     /** @var array */
     protected $messages = [];
 
@@ -65,7 +72,10 @@ class WebDriver extends HttpDriver
      */
     public function getUser(IncomingMessage $matchingMessage)
     {
-        return new User($matchingMessage->getSender());
+        return new User($matchingMessage->getSender(), user_info: ['location'=>$this->event->get('location')]);
+//        Log::info(print_r($user, true));
+//        return $user;
+       // return new User($matchingMessage->getSender(), user_info: ['location'=>$this->event->get('location')]);
     }
 
     /**
@@ -156,6 +166,11 @@ class WebDriver extends HttpDriver
             $incomingMessage = $this->addAttachments($incomingMessage);
 
             $this->messages = [$incomingMessage];
+            $this->sendPayload([
+                'message' => $incomingMessage,
+                'additionalParameters' => null,
+                'recipient'=> $sender
+            ]);
         }
 
         return $this->messages;
@@ -198,34 +213,24 @@ class WebDriver extends HttpDriver
      */
     public function sendPayload($payload)
     {
-        if($this->matchesRequest()) {
+        if($this->matchesRequest())
             $this->replies[] = $payload;
-        } else {
-            /** @var $message OutgoingMessage|Question|string */
-            $message=$payload['message'];
-            $channel = 'chat_'.$payload['recipient'];
+        else {
             $pusher= new Pusher(config('broadcasting.connections')['pusher']['key'],
                 config('broadcasting.connections')['pusher']['secret'],
                 config('broadcasting.connections')['pusher']['app_id'],
                 config('broadcasting.connections')['pusher']['options']);
-            if(is_string($message)) $text=$message;
-            else  $text=$message->getText();
-            if(!is_string($message)) {
-                $text=$message->getText();
-                $attachmentData = (is_null($message->getAttachment())) ? null : $message->getAttachment()->toWebDriver();
-                $pusher->trigger($channel,'chat_message',[
-                    'type' => 'text',
-                    'text' =>$text,
-                    'attachment' => $attachmentData,
-                ]);
-            } else {
-                $pusher->trigger($channel,'chat_message',[
-                    'type' => 'text',
-                    'text' =>$message,
-                    'attachment' => null,
-
-                ]);
+            $reply=$this->buildReply([$payload])[0];
+            try {
+                $pusher->getChannelInfo($this->channel);
+                $pusher->trigger($this->channel,'chat_message',$reply);
+            } catch (\Exception){
+                $unread=\Cache::get('unread-'.$this->channel, []);
+                $unread[]=$reply;
+                \Cache::put('unread-'.$this->channel, $unread, Carbon::now()->addDays(90));
             }
+
+
         }
     }
 
@@ -238,13 +243,22 @@ class WebDriver extends HttpDriver
         $replyData = Collection::make($messages)->transform(function ($replyData) {
             $reply = [];
             $message = $replyData['message'];
+            if(empty($this->channel)) $this->channel='chat_'.$replyData['recipient'];
             $additionalParameters = $replyData['additionalParameters'];
-
             if (is_array($message)) {
                 $reply = $message;
             } elseif ($message instanceof WebAccess) {
                 $reply = $message->toWebDriver();
-            } elseif ($message instanceof OutgoingMessage) {
+            } elseif($message instanceof IncomingMessage) {
+                $attachmentData=array_merge($message->getAudio(), $message->getFiles(), $message->getImages());//, $payload->getContact(), $payload->getLocation());
+                if(count($attachmentData)==1) {
+                    $reply=(new AttachmentVisitorReply('', $attachmentData[0]))->toWebDriver();
+                } else $reply=[
+                    'type' => 'text',
+                    'text' =>$message->getText(),
+                    'from' =>'visitor'
+                ];
+            }  elseif ($message instanceof OutgoingMessage) {
                 $attachmentData = (is_null($message->getAttachment())) ? null : $message->getAttachment()->toWebDriver();
                 $reply = [
                     'type' => 'text',
@@ -269,6 +283,25 @@ class WebDriver extends HttpDriver
 
         // Reset replies
         $this->replies = [];
+
+        if(!empty($this->channel)) {
+            $pusher= new Pusher(config('broadcasting.connections')['pusher']['key'],
+                config('broadcasting.connections')['pusher']['secret'],
+                config('broadcasting.connections')['pusher']['app_id'],
+                config('broadcasting.connections')['pusher']['options']);
+
+            try {
+                $pusher->getChannelInfo($this->channel);
+                foreach ($messages as $message) {
+                    $pusher->trigger($this->channel,'chat_message',$message);
+                }
+            } catch (\Exception){
+                $unread=\Cache::get('unread-'.$this->channel, []);
+                \Cache::put('unread-'.$this->channel, array_merge($unread,$messages), Carbon::now()->addDays(90));
+            }
+
+            $messages=[];
+        }
 
         (new Response(json_encode([
             'status' => $this->replyStatusCode,
@@ -309,30 +342,31 @@ class WebDriver extends HttpDriver
      */
     protected function addAttachments($incomingMessage)
     {
-        $attachment = $this->event->get('attachment');
+        $filetype = strtolower($this->event->get('filetype'));
 
-        if ($attachment === self::ATTACHMENT_IMAGE) {
-            $images = $this->files->map(function ($file) {
+        //if (strpos( $filetype, self::ATTACHMENT_IMAGE)===0) {
+        if(in_array($filetype, ['image/png', 'image/jpg', 'image/bmp', 'image/webp', 'image/gif'])) {
+            $images = $this->files->map(function ($file) use ($incomingMessage) {
 //                if ($file instanceof UploadedFile) {
 //                    $path = $file->getRealPath();
 //                } else {
 //                    $path = $file['tmp_name'];
 //                }
                 $bot_dir='bot_file_cache';
-                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
-                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
-                $file = new Image($url);
-                $this->replies[]= [
-                    'message' => new AttachmentVisitorReply('', $file),
-                    'additionalParameters' => []
-                ];
-                return $file;
+                \Intervention\Image\Facades\Image::make($file)->resize(600, 600, function ($constraint) {
+                    $constraint->aspectRatio();
+                })->save( 'core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.png');
+//                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
+                $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.png');
+//                Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
+                return new Image($url);
 //                return new Image($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Image::PATTERN);
             $incomingMessage->setImages($images);
-        } elseif ($attachment === self::ATTACHMENT_AUDIO) {
-            $audio = $this->files->map(function ($file) {
+//        } elseif (strpos( $filetype, self::ATTACHMENT_AUDIO)===0) {
+        } elseif (in_array($filetype, ['audio/mp3', 'audio/ogg', 'audio/wav', 'audio/mpeg', 'audio/webm'])) {
+            $audio = $this->files->map(function ($file) use ($incomingMessage) {
                 if ($file instanceof UploadedFile) {
                     $path = $file->getRealPath();
                 } else {
@@ -341,18 +375,14 @@ class WebDriver extends HttpDriver
                 $bot_dir='bot_file_cache';
                 $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
-                $file = new Audio($url);
-                $this->replies[]= [
-                    'message' => new AttachmentVisitorReply('', $file),
-                    'additionalParameters' => []
-                ];
-                return $file;
+                return new Audio($url);
 //                return new Audio($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Audio::PATTERN);
             $incomingMessage->setAudio($audio);
-        } elseif ($attachment === self::ATTACHMENT_VIDEO) {
-            $videos = $this->files->map(function ($file) {
+//        } elseif (strpos( $filetype, self::ATTACHMENT_VIDEO)===0) {
+        } elseif (in_array($filetype, ['video/mp4', 'video/mov', 'video/avi', 'video/x-msvideo', 'video/mp4', 'video/mpeg', 'video/ogg', 'video/webm'])) {
+            $videos = $this->files->map(function ($file) use ($incomingMessage) {
                 if ($file instanceof UploadedFile) {
                     $path = $file->getRealPath();
                 } else {
@@ -361,18 +391,15 @@ class WebDriver extends HttpDriver
                 $bot_dir='bot_file_cache';
                 $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
-                $file = new Video($url);
-                $this->replies[]= [
-                    'message' => new AttachmentVisitorReply('', $file),
-                    'additionalParameters' => []
-                ];
-                return $file;
+                return new Video($url);
 //                return new Video($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(Video::PATTERN);
             $incomingMessage->setVideos($videos);
-        } elseif ($attachment === self::ATTACHMENT_FILE) {
-            $files = $this->files->map(function ($file) {
+        } elseif (in_array($filetype, ['application/pdf', 'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/gzip', 'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'])) {
+            $files = $this->files->map(function ($file) use ($incomingMessage) {
                 if ($file instanceof UploadedFile) {
                     $path = $file->getRealPath();
                 } else {
@@ -381,17 +408,12 @@ class WebDriver extends HttpDriver
                 $bot_dir='bot_file_cache';
                 $url=url('/core/storage/app/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension());
                 Storage::put('/'.$bot_dir.'/'.$file->getFilename().'.'.$file->getClientOriginalExtension(), file_get_contents($file));
-                $file = new File($url);
-                $this->replies[]= [
-                    'message' => new AttachmentVisitorReply('', $file),
-                    'additionalParameters' => []
-                ];
-                return $file;
+                return new File($url);
 //                return new File($this->getDataURI($path));
             })->values()->toArray();
             $incomingMessage->setText(File::PATTERN);
             $incomingMessage->setFiles($files);
-        }
+        } elseif ($this->event->get('filename')!='') { abort(501, 'Not supported file: '.$this->event->get('filename'));}
 
         return $incomingMessage;
     }
